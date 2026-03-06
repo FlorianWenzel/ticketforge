@@ -66,7 +66,7 @@ npm install
 # 2. Configure
 cp .env.example .env
 # Edit .env — set GITHUB_TOKEN, GITHUB_BOT_USERNAME, GITHUB_REPO_ALLOWLIST,
-# OPENCODE_BASE_URL, etc.
+# OPENCODE_BASE_URL (or OPENCODE_EXTERNAL_URL in Docker), etc.
 
 # 3. Run migrations
 npm run migrate
@@ -126,6 +126,27 @@ See [`.env.example`](.env.example) for the full list with documentation.
 # Unit + integration tests (Node built-in test runner)
 node --import tsx/esm --test test/**/*.test.ts
 ```
+
+## Docker
+
+Build the container:
+
+```bash
+docker build -t ticketforge:latest .
+```
+
+Run it with your existing env vars, plus an external OpenCode URL when needed:
+
+```bash
+docker run --rm -p 3000:3000 \
+  --env-file .env \
+  -e OPENCODE_EXTERNAL_URL=http://host.docker.internal:4096 \
+  -v "$(pwd)/data:/app/data" \
+  ticketforge:latest
+```
+
+`OPENCODE_EXTERNAL_URL` is only used as a fallback when
+`OPENCODE_BASE_URL` is not set.
 
 ## Production deployment
 
