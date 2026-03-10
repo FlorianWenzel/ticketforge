@@ -1,6 +1,7 @@
 import express from 'express';
 import type { Server } from 'node:http';
-import { registerRoutes } from './routes.js';
+import swaggerUi from 'swagger-ui-express';
+import { RegisterRoutes } from './generated/routes.js';
 import { childLogger } from '../utils/logger.js';
 import type { Config } from '../config/index.js';
 
@@ -19,9 +20,18 @@ export function startApiServer(config: Config): Promise<Server> {
     next();
   });
 
-  const router = express.Router();
-  registerRoutes(router);
-  app.use('/api', router);
+  // Swagger docs — serve generated spec
+  app.use('/docs', swaggerUi.serve, async (_req: express.Request, res: express.Response) => {
+    const spec = await import('./generated/swagger.json', { with: { type: 'json' } });
+    return swaggerUi.setup(spec.default)(_req, res, () => {});
+  });
+  app.get('/openapi.json', async (_req, res) => {
+    const spec = await import('./generated/swagger.json', { with: { type: 'json' } });
+    res.json(spec.default);
+  });
+
+  // tsoa generated routes
+  RegisterRoutes(app);
 
   // 404 handler
   app.use((_req, res) => {
