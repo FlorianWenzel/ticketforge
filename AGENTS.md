@@ -1,4 +1,4 @@
-# Agents
+# AGENTS.md
 
 This document describes how TicketForge works as an autonomous agent system.
 
