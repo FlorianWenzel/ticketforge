@@ -15,13 +15,15 @@ export function getDb(): Kysely<DB> {
 export function initDb(dbPath: string): Kysely<DB> {
   const log = childLogger({ component: 'db' });
 
-  const resolved = path.resolve(dbPath);
-  const dir = path.dirname(resolved);
-  fs.mkdirSync(dir, { recursive: true });
+  const isMemory = dbPath === ':memory:';
+  if (!isMemory) {
+    const resolved = path.resolve(dbPath);
+    const dir = path.dirname(resolved);
+    fs.mkdirSync(dir, { recursive: true });
+    log.info({ dbPath: resolved }, 'Opening SQLite database');
+  }
 
-  log.info({ dbPath: resolved }, 'Opening SQLite database');
-
-  const sqlite = new Database(resolved);
+  const sqlite = new Database(isMemory ? ':memory:' : path.resolve(dbPath));
 
   // Performance & safety settings
   sqlite.pragma('journal_mode = WAL');
