@@ -1,7 +1,8 @@
 import type { Router, Request, Response } from 'express';
 import { getDb } from '../store/db.js';
 import { getQueue } from '../queue/index.js';
-import { getWorkItemsInStatus } from '../store/work-items.js';
+import { getWorkItemsInStatus, getWorkItem } from '../store/work-items.js';
+import { getAuditEvents } from '../store/audit.js';
 import { WorkItemStatus } from '../domain/types.js';
 import { childLogger } from '../utils/logger.js';
 
@@ -11,7 +12,6 @@ export function registerRoutes(router: Router): void {
   // ── Health ──────────────────────────────────────────────────────────────────
   router.get('/health', (_req: Request, res: Response) => {
     try {
-      // Quick DB ping
       getDb().selectFrom('work_items').select('id').limit(1).execute();
       res.json({ status: 'ok', timestamp: new Date().toISOString() });
     } catch (err) {
@@ -62,11 +62,38 @@ export function registerRoutes(router: Router): void {
     }
   });
 
-  // ── Work item status ─────────────────────────────────────────────────────────
+  // ── Work items ─────────────────────────────────────────────────────────────
+  router.get('/work-items', async (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      let query = db.selectFrom('work_items').selectAll().orderBy('created_at', 'desc');
+
+      const status = req.query['status'];
+      if (typeof status === 'string') {
+        query = query.where('status', '=', status);
+      }
+
+      const repo = req.query['repo'];
+      if (typeof repo === 'string' && repo.includes('/')) {
+        const [owner, name] = repo.split('/', 2);
+        query = query.where('repo_owner', '=', owner!).where('repo_name', '=', name!);
+      }
+
+      const limit = Math.min(Number(req.query['limit']) || 100, 500);
+      const offset = Number(req.query['offset']) || 0;
+      query = query.limit(limit).offset(offset);
+
+      const rows = await query.execute();
+      res.json(rows);
+    } catch (err) {
+      log.error({ err }, 'Error listing work items');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
   router.get('/work-items/:id', async (req: Request, res: Response) => {
     const id = String(req.params['id'] ?? '');
     try {
-      const { getWorkItem } = await import('../store/work-items.js');
       const item = await getWorkItem(id);
       if (!item) {
         res.status(404).json({ error: 'Not found' });
@@ -79,15 +106,79 @@ export function registerRoutes(router: Router): void {
     }
   });
 
-  // ── Audit trail ──────────────────────────────────────────────────────────────
+  // ── Audit events ──────────────────────────────────────────────────────────
   router.get('/work-items/:id/audit', async (req: Request, res: Response) => {
     const id = String(req.params['id'] ?? '');
     try {
-      const { getAuditEvents } = await import('../store/audit.js');
       const events = await getAuditEvents(id);
       res.json(events);
     } catch (err) {
       log.error({ err }, 'Error fetching audit events');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.get('/audit-events', async (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      let query = db.selectFrom('audit_events').selectAll().orderBy('created_at', 'desc');
+
+      const kind = req.query['kind'];
+      if (typeof kind === 'string') {
+        query = query.where('kind', '=', kind);
+      }
+
+      const limit = Math.min(Number(req.query['limit']) || 100, 500);
+      const offset = Number(req.query['offset']) || 0;
+      query = query.limit(limit).offset(offset);
+
+      const rows = await query.execute();
+      res.json(rows.map((r) => ({
+        ...r,
+        payload: JSON.parse(r.payload_json),
+        payload_json: undefined,
+      })));
+    } catch (err) {
+      log.error({ err }, 'Error listing audit events');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ── Sessions ──────────────────────────────────────────────────────────────
+  router.get('/sessions', async (_req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      const rows = await db.selectFrom('opencode_sessions').selectAll().orderBy('created_at', 'desc').execute();
+      res.json(rows);
+    } catch (err) {
+      log.error({ err }, 'Error listing sessions');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ── Checkpoints ───────────────────────────────────────────────────────────
+  router.get('/checkpoints', async (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      let query = db.selectFrom('checkpoints').selectAll().orderBy('created_at', 'desc');
+
+      const workItemId = req.query['work_item_id'];
+      if (typeof workItemId === 'string') {
+        query = query.where('work_item_id', '=', workItemId);
+      }
+
+      const limit = Math.min(Number(req.query['limit']) || 100, 500);
+      const offset = Number(req.query['offset']) || 0;
+      query = query.limit(limit).offset(offset);
+
+      const rows = await query.execute();
+      res.json(rows.map((r) => ({
+        ...r,
+        payload: JSON.parse(r.payload_json),
+        payload_json: undefined,
+      })));
+    } catch (err) {
+      log.error({ err }, 'Error listing checkpoints');
       res.status(500).json({ error: 'Internal error' });
     }
   });

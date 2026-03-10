@@ -22,6 +22,8 @@ import { getPr } from '../github/prs.js';
 import { buildTaskPrompt, buildCiFixPrompt } from '../opencode/prompts.js';
 import { runTask } from '../opencode/sessions.js';
 
+import { isAuthError, runDeviceAuthFlow } from '../opencode/auth.js';
+
 import {
   WorkItemStatus,
   GithubKind,
@@ -69,10 +71,34 @@ export async function executeWorkItem(workItemId: string): Promise<void> {
       { workItemId },
     );
   } catch (err) {
-    log.error({ err }, 'OpenCode task failed');
-    await failWorkItem(workItemId, toErrorString(err));
-    await postErrorComment(running, toErrorString(err));
-    return;
+    const errStr = toErrorString(err);
+
+    // If this looks like an auth/provider error, trigger device login flow
+    if (isAuthError(errStr)) {
+      log.warn({ err }, 'Auth error detected — starting device login flow');
+      try {
+        await handleAuthFlow(running);
+        // Auth completed — retry the task once
+        try {
+          result = await runTask({ workItemId, prompt, existingSessionId: running.sessionId ?? undefined });
+        } catch (retryErr) {
+          log.error({ err: retryErr }, 'OpenCode task failed after re-auth');
+          await failWorkItem(workItemId, toErrorString(retryErr));
+          await postErrorComment(running, toErrorString(retryErr));
+          return;
+        }
+      } catch (authErr) {
+        log.error({ err: authErr }, 'Device auth flow failed');
+        await failWorkItem(workItemId, `Auth required but login flow failed: ${toErrorString(authErr)}`);
+        await postErrorComment(running, `Authentication is required but no one completed the login in time. Please re-assign this issue to try again.`);
+        return;
+      }
+    } else {
+      log.error({ err }, 'OpenCode task failed');
+      await failWorkItem(workItemId, errStr);
+      await postErrorComment(running, errStr);
+      return;
+    }
   }
 
   // ── 4. Post GitHub update ───────────────────────────────────────────────────
@@ -216,6 +242,42 @@ async function postErrorComment(item: WorkItem, error: string): Promise<void> {
   if (!issueOrPrNumber) return;
   const body = `⚠️ TicketForge encountered an error processing this request:\n\n\`\`\`\n${error}\n\`\`\``;
   await postIssueComment(item.repoOwner, item.repoName, issueOrPrNumber, body).catch(() => null);
+}
+
+async function handleAuthFlow(item: WorkItem): Promise<void> {
+  const issueOrPrNumber = item.githubIssueNumber ?? item.githubPrNumber;
+
+  await runDeviceAuthFlow(async (verifyUrl, userCode) => {
+    const message = [
+      `🔑 **OpenAI authentication required**`,
+      ``,
+      `To continue processing this task, someone needs to log in:`,
+      ``,
+      `1. Open: ${verifyUrl}`,
+      `2. Enter code: **\`${userCode}\`**`,
+      `3. Complete the login (code expires in 15 minutes)`,
+      ``,
+      `_I'll resume work automatically once authenticated._`,
+    ].join('\n');
+
+    if (issueOrPrNumber) {
+      await postIssueComment(item.repoOwner, item.repoName, issueOrPrNumber, message).catch(() => null);
+    }
+
+    await audit.logAuditEvent(AuditEventKind.WorkItemTransitioned, {
+      reason: 'auth_required',
+      verifyUrl,
+      userCode,
+    }, item.id);
+  });
+
+  // Post success comment
+  if (issueOrPrNumber) {
+    await postIssueComment(
+      item.repoOwner, item.repoName, issueOrPrNumber,
+      `✅ Authentication successful — resuming work.`,
+    ).catch(() => null);
+  }
 }
 
 function buildResultComment(result: OpencodeTaskResult): string {
