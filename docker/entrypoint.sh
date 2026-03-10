@@ -9,11 +9,10 @@ set -euo pipefail
 # Default the allowlist to the target repo if not set
 export GITHUB_REPO_ALLOWLIST="${GITHUB_REPO_ALLOWLIST:-$GITHUB_REPOSITORY}"
 
-# ── 1. Authenticate GitHub CLI ───────────────────────────────────────────────
-echo "$GITHUB_TOKEN" | gh auth login --with-token
-gh auth setup-git  # configures git credential helper for HTTPS
+# ── 1. Configure git to use the token for HTTPS cloning ─────────────────────
+git config --global url."https://${GITHUB_BOT_USERNAME}:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-echo "Authenticated as $(gh auth status 2>&1 | head -1)"
+echo "Git credentials configured for ${GITHUB_BOT_USERNAME}"
 
 # ── 2. Clone the repository ─────────────────────────────────────────────────
 WORKSPACE="/workspace"
