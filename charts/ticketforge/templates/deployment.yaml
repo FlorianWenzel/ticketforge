@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ticketforge.fullname" . }}
+  labels:
+    {{- include "ticketforge.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ticketforge.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ticketforge.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ticketforge
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.apiPort }}
+              protocol: TCP
+          env:
+            # Secrets
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | default (include "ticketforge.fullname" .) }}
+                  key: GITHUB_TOKEN
+            - name: GITHUB_BOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | default (include "ticketforge.fullname" .) }}
+                  key: GITHUB_BOT_USERNAME
+            - name: OPENCODE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | default (include "ticketforge.fullname" .) }}
+                  key: OPENCODE_API_KEY
+                  optional: true
+            # Required by entrypoint.sh
+            - name: GITHUB_REPOSITORY
+              value: {{ .Values.githubRepository | quote }}
+            # Config
+            - name: GITHUB_REPO_ALLOWLIST
+              value: {{ .Values.githubRepoAllowlist | quote }}
+            - name: OPENCODE_MODEL
+              value: {{ .Values.opencodeModel | quote }}
+            - name: POLL_CRON_ASSIGNMENTS
+              value: {{ .Values.pollCronAssignments | quote }}
+            - name: POLL_CRON_MENTIONS
+              value: {{ .Values.pollCronMentions | quote }}
+            - name: POLL_CRON_CI
+              value: {{ .Values.pollCronCi | quote }}
+            - name: POLL_CRON_STALE
+              value: {{ .Values.pollCronStale | quote }}
+            - name: MAX_CONCURRENT_WORKERS
+              value: {{ .Values.maxConcurrentWorkers | quote }}
+            - name: MAX_RETRY_ATTEMPTS
+              value: {{ .Values.maxRetryAttempts | quote }}
+            - name: STALE_THRESHOLD_MINUTES
+              value: {{ .Values.staleThresholdMinutes | quote }}
+            - name: DATABASE_PATH
+              value: /data/ticketforge.db
+            - name: API_PORT
+              value: {{ .Values.apiPort | quote }}
+            - name: API_HOST
+              value: {{ .Values.apiHost | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: LOG_PRETTY
+              value: {{ .Values.logPretty | quote }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ticketforge.fullname" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
